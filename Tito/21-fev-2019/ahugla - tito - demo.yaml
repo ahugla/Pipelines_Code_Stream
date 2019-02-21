@@ -193,7 +193,7 @@ stages:
           scm: ahugla - github
           kubernetesServer: ahugla - K8S - cpod-vr
         input:
-          filePath: TITO/NodePort/CodeStreamDemo/CodeStreamDemo.yaml
+          filePath: CodeStreamDemo.yaml
           commit: ''
           namespace: ''
           action: DELETE
@@ -300,7 +300,7 @@ stages:
           scm: ahugla - github
           kubernetesServer: ahugla - K8S - cpod-vr
         input:
-          filePath: TITO/NodePort/CodeStreamDemo/CodeStreamDemo.yaml
+          filePath: CodeStreamDemo.yaml
           commit: ''
           namespace: ''
           action: CREATE
