@@ -1,0 +1,266 @@
+---
+project: ahugla
+kind: PIPELINE
+name: ahugla - Yelb - PKS
+enabled: true
+concurrency: 10
+input:
+  Slack_integration: 'NO'
+  Build: ''
+  Human_Control: 'YES'
+ciWorkspace:
+  endpoint: ''
+  image: ''
+  registry: ''
+  path: ''
+  cache:
+  - ''
+stageOrder:
+- Preparation
+- Deployment
+- Mise en prod
+stages:
+  Preparation:
+    taskOrder:
+    - cleaning
+    tasks:
+      cleaning:
+        type: SSH
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            }
+          host: 172.18.4.150
+          arguments: [
+            ]
+          passphrase: ''
+          script: "\n# change context to go to pks\n/root/pks_k8s-02_context_switch.sh\n\n# remise au\
+            \ propre de l'env de prod (namespace=prod)\nkubectl apply --record=true -f /root/yaml_pks/yelb-n_prod.yaml\
+            \ || true\n \n## suppression de l'env de test (namespace=yelb)\nkubectl delete -f /root/yaml_pks/yelb.yaml\
+            \  || true\n\n#  return to \n/root/ahugla_k8s_context_switch.sh\n"
+          username: root
+  Deployment:
+    taskOrder:
+    - Deploy
+    - Update Slack
+    - Human Verification
+    tasks:
+      Human Verification:
+        type: UserOperation
+        preCondition: ${input.Human_Control} == "YES"
+        input:
+          summary: Verifier l'access et tester l'appli
+          pipelineName: ${name}
+          expirationInDays: 3
+          approverGroups: [
+            ]
+          approvers: [
+            ahugla@vmware.com]
+          description: IP LoadBalancer = ${Deployment.Deploy.output.response.loadBalancers.yelb-ui.ingress[0].ip}
+          sendemail: false
+      Deploy:
+        type: K8S
+        endpoints:
+          kubernetesServer: ahugla - pks-02
+        input:
+          filePath: ''
+          commit: ''
+          namespace: ''
+          action: CREATE
+          filterByLabel: ''
+          continueOnConflict: false
+          parameters: {
+            }
+          timeout: '5'
+          yaml: |
+            # Minor modification from http://www.it20.info/2017/07/yelb-yet-another-sample-app/ to demo VMware PKS
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: redis-server
+              labels:
+                app: redis-server
+                tier: cache
+              namespace: yelb
+            spec:
+              type: ClusterIP
+              ports:
+              - port: 6379
+              selector:
+                app: redis-server
+                tier: cache
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: yelb-db
+              labels:
+                app: yelb-db
+                tier: backenddb
+              namespace: yelb
+            spec:
+              type: ClusterIP
+              ports:
+              - port: 5432
+              selector:
+                app: yelb-db
+                tier: backenddb
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: yelb-appserver
+              labels:
+                app: yelb-appserver
+                tier: middletier
+              namespace: yelb
+            spec:
+              type: ClusterIP
+              ports:
+              - port: 4567
+              selector:
+                app: yelb-appserver
+                tier: middletier
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: yelb-ui
+              labels:
+                app: yelb-ui
+                tier: frontend
+              namespace: yelb
+            spec:
+              type: LoadBalancer
+              ports:
+              - port: 80
+                protocol: TCP
+                targetPort: 80
+              selector:
+                app: yelb-ui
+                tier: frontend
+            ---
+            apiVersion: extensions/v1beta1
+            kind: Deployment
+            metadata:
+              name: yelb-ui
+              namespace: yelb
+            spec:
+              replicas: 1
+              template:
+                metadata:
+                  labels:
+                    app: yelb-ui
+                    tier: frontend
+                spec:
+                  containers:
+                  - name: yelb-ui
+                    image: harbor.cpod-kaps4biz-dc2.az-lab.shwrfr.com/yelb/yelb-ui:0.3
+                    ports:
+                    - containerPort: 80
+            ---
+            apiVersion: extensions/v1beta1
+            kind: Deployment
+            metadata:
+              name: redis-server
+              namespace: yelb
+            spec:
+              replicas: 1
+              template:
+                metadata:
+                  labels:
+                    app: redis-server
+                    tier: cache
+                spec:
+                  containers:
+                  - name: redis-server
+                    image: harbor.cpod-kaps4biz-dc2.az-lab.shwrfr.com/yelb/redis:4.0.2
+                    ports:
+                    - containerPort: 6379
+            ---
+            apiVersion: extensions/v1beta1
+            kind: Deployment
+            metadata:
+              name: yelb-db
+              namespace: yelb
+            spec:
+              replicas: 1
+              template:
+                metadata:
+                  labels:
+                    app: yelb-db
+                    tier: backenddb
+                spec:
+                  containers:
+                  - name: yelb-db
+                    image: harbor.cpod-kaps4biz-dc2.az-lab.shwrfr.com/yelb/yelb-db:0.3
+                    ports:
+                    - containerPort: 5432
+            ---
+            apiVersion: extensions/v1beta1
+            kind: Deployment
+            metadata:
+              name: yelb-appserver
+              namespace: yelb
+            spec:
+              replicas: 1
+              template:
+                metadata:
+                  labels:
+                    app: yelb-appserver
+                    tier: middletier
+                spec:
+                  containers:
+                  - name: yelb-appserver
+                    image: harbor.cpod-kaps4biz-dc2.az-lab.shwrfr.com/yelb/yelb-appserver:0.3
+                    ports:
+                    - containerPort: 4567
+          revision: n-1
+      Update Slack:
+        type: REST
+        preCondition: ${input.Slack_integration} == "YES"
+        input:
+          headers: {
+            }
+          payload: '{"text":"YELB : Jenkins Build ${input.Build} - UAT - Tester sur: http://${Deployment.Deploy.output.response.loadBalancers.yelb-ui.ingress[0].ip}"}'
+          action: post
+          url: ${var.ahugla - Slack URL - shwrfr}
+  Mise en prod:
+    taskOrder:
+    - Rolling Upgrate
+    - Update Slack
+    tasks:
+      Rolling Upgrate:
+        type: SSH
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            }
+          host: 172.18.4.150
+          arguments: [
+            ]
+          passphrase: ''
+          script: "\n# change context to go to pks\n/root/pks_k8s-02_context_switch.sh\n\n\n# passage\
+            \ du yaml v2 \nkubectl apply --record=true -f /root/yaml_pks/yelb-n_prod-v2.yaml || true\n\
+            \n#  return to \n/root/ahugla_k8s_context_switch.sh\n\n\n"
+          username: root
+      Update Slack:
+        type: REST
+        preCondition: ${input.Slack_integration} == "YES"
+        input:
+          headers: {
+            Accept: application/json,
+            Content-Type: application/json
+          }
+          payload: '{"text":"YELB : Jenkins Build ${input.Build} - UPGRADE PROD - Upgrade Completed :
+            http://192.168.223.35"}'
+          action: post
+          url: ${var.ahugla - Slack URL - shwrfr}

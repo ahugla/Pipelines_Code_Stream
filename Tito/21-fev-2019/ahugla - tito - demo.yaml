@@ -1,0 +1,313 @@
+---
+project: ahugla
+kind: PIPELINE
+name: ahugla - tito - demo
+enabled: true
+concurrency: 10
+input:
+  Tito_Version: V1.9.6
+  Slack_integration: 'NO'
+  Human_control: 'YES'
+  Full_Prod_Safety_Period: '30'
+  Release_to_Prod: 'NO'
+  Wavefront_Proxy: wvfp1.cpod-vr.shwrfr.mooo.com
+  Wavefront_Proxy_port: '2878'
+starred:
+  input: Tito_Version
+ciWorkspace:
+  endpoint: ''
+  image: ''
+  registry: ''
+  path: ''
+  cache:
+  - ''
+stageOrder:
+- Clean Test Env
+- Test - Perf
+- UAT
+- Passage en prod
+stages:
+  Clean Test Env:
+    taskOrder:
+    - Clean K8S
+    tasks:
+      Clean K8S:
+        type: SSH
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            }
+          host: 172.18.4.150
+          arguments: [
+            ]
+          passphrase: ''
+          script: |2+
+
+            # DELETE ALL DEPLOYMENT IN NAMESPACE DEFAULT
+            kubectl delete deployment --all --namespace=default
+
+            # DELETE ALL RC IN NAMESPACE DEFAULT
+            kubectl delete rc --all --namespace=default
+
+            # DELETE ALL PODS IN NAMESPACE DEFAULT
+            kubectl delete pod --all --namespace=default
+
+            # DELETE ALL SERVICES IN NAMESPACE DEFAULT
+            svcToDelete=`kubectl get service | awk {'print $1'}  | sed '/NAME/d' | sed '/kubernetes/d'`
+            if [ $svcToDelete ]
+            then
+                kubectl delete service $svcToDelete --namespace=default
+            fi
+
+
+
+          username: root
+  Passage en prod:
+    taskOrder:
+    - Approval
+    - Upgrade 50 pour 100
+    - Safety period
+    - Upgrade 100 pour 100
+    - Update Slack
+    tasks:
+      Upgrade 50 pour 100:
+        type: SSH
+        preCondition: ${input.Release_to_Prod} == "YES"
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            Tito_Version: '${input.Tito_Version}',
+            Wavefront_Proxy: '${input.Wavefront_Proxy}',
+            Wavefront_Proxy_port: '${input.Wavefront_Proxy_port}'
+          }
+          host: 192.168.203.100
+          arguments: [
+            ]
+          passphrase: ''
+          script: "\nsystemctl stop httpd\n\ncd /tmp\nrm -rf /var/www/html\n\ngit clone https://github.com/vmeoc/Tito.git\
+            \  /var/www/html           \n\ncd /var/www/html \ngit checkout $Tito_Version\n\n\n# Update\
+            \ Wavefront config\nsed -i -e \"s/getenv('PROXY_NAME')/\"\\\"$Wavefront_Proxy\\\"\"/g\"  /var/www/html/getTrafficData.php;\n\
+            sed -i -e \"s/getenv('PROXY_PORT')/\"\\\"$Wavefront_Proxy_port\\\"\"/g\"  /var/www/html/getTrafficData.php;\n\
+            \n\nsystemctl start httpd\n\n"
+          username: root
+      Safety period:
+        type: SSH
+        preCondition: ${input.Release_to_Prod} == "YES"
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            Full_Prod_Safety_Period: '${input.Full_Prod_Safety_Period}'
+          }
+          host: 192.168.203.103
+          arguments: [
+            ]
+          passphrase: ''
+          script: |2
+
+            sleep $Full_Prod_Safety_Period
+          username: root
+      Upgrade 100 pour 100:
+        type: SSH
+        preCondition: ${input.Release_to_Prod} == "YES"
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            Tito_Version: '${input.Tito_Version}',
+            Wavefront_Proxy: '${input.Wavefront_Proxy}',
+            Wavefront_Proxy_port: '${input.Wavefront_Proxy_port}'
+          }
+          host: 192.168.203.103
+          arguments: [
+            ]
+          passphrase: ''
+          script: "\nsystemctl stop httpd\n\ncd /tmp\nrm -rf /var/www/html\n\ngit clone https://github.com/vmeoc/Tito.git\
+            \  /var/www/html           \n\ncd /var/www/html \ngit checkout $Tito_Version\n\n\n# Update\
+            \ Wavefront config\nsed -i -e \"s/getenv('PROXY_NAME')/\"\\\"$Wavefront_Proxy\\\"\"/g\"  /var/www/html/getTrafficData.php;\n\
+            sed -i -e \"s/getenv('PROXY_PORT')/\"\\\"$Wavefront_Proxy_port\\\"\"/g\"  /var/www/html/getTrafficData.php;\n\
+            \n\nsystemctl start httpd\n"
+          username: root
+      Approval:
+        type: UserOperation
+        preCondition: |-
+          ${input.Release_to_Prod} == "YES"
+          && ${input.Human_control} == "YES"
+        input:
+          summary: Validation pour passage en prod de TITO version ${input.Tito_Version}
+          pipelineName: ${name}
+          expirationInDays: 3
+          approverGroups: [
+            ]
+          approvers: [
+            ahugla@vmware.com]
+          description: Validation avant passage en prod de la nouvelle version de Tito
+          sendemail: false
+      Update Slack:
+        type: REST
+        preCondition: |
+          ${input.Release_to_Prod} == "YES"
+          && ${input.Slack_integration} == "YES"
+        input:
+          headers: {
+            Accept: application/json,
+            Content-Type: application/json
+          }
+          payload: '{"text":"TITO - ${input.Tito_Version} - PROD UPGRADE - Completed"}'
+          action: post
+          url: ${var.ahugla - Slack URL - shwrfr}
+  UAT:
+    taskOrder:
+    - Slack message
+    - UI verification
+    - Destroy Test env
+    tasks:
+      Slack message:
+        type: REST
+        preCondition: ${input.Slack_integration} == "YES"
+        input:
+          headers: {
+            Accept: application/json,
+            Content-Type: application/json
+          }
+          payload: '{"text":"TITO : ${input.Tito_Version} - UAT - Verifier la plateforme de test"}'
+          action: post
+          url: ${var.ahugla - Slack URL - shwrfr}
+      Destroy Test env:
+        type: K8S
+        endpoints:
+          scm: ahugla - github
+          kubernetesServer: ahugla - K8S - cpod-vr
+        input:
+          filePath: TITO/NodePort/CodeStreamDemo/CodeStreamDemo.yaml
+          commit: ''
+          namespace: ''
+          action: DELETE
+          filterByLabel: ''
+          continueOnConflict: false
+          parameters: {
+            }
+          timeout: '5'
+          yaml: ''
+          revision: n-1
+      UI verification:
+        type: UserOperation
+        preCondition: ${input.Human_control} == "YES"
+        input:
+          summary: 'Verification la release de Tito: ${input.Tito_Version}'
+          pipelineName: ${name}
+          expirationInDays: 3
+          approverGroups: [
+            ]
+          approvers: [
+            ahugla@vmware.com]
+          description: |-
+            Verifier:
+             - La version
+             - Le positionement des champs de recherche
+             - les menus deroulants
+          sendemail: false
+  Test - Perf:
+    taskOrder:
+    - Create yaml
+    - Deploy tito yaml
+    - Polling until Tito ready
+    - Tito loader
+    tasks:
+      Polling until Tito ready:
+        type: SSH
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: /root/CAS_agent_scripts/isURLready
+          environmentVariables: {
+            maxRetry: '30',
+            serviceIP: 172.18.4.155,
+            servicePort: '31200'
+          }
+          host: 172.18.4.154
+          arguments: [
+            ]
+          passphrase: ''
+          script: |2
+
+            cd /root/CAS_agent_scripts/isURLready
+
+            ./isURLready.sh $serviceIP $servicePort $maxRetry
+
+            exit $?
+          username: root
+      Create yaml:
+        type: SSH
+        endpoints:
+          agent: ahugla - SSH agent cpod-vr
+        input:
+          privatekey: ''
+          password: s2enc~xm5hfk/Ecgs4hXhc9yLd/g==
+          workingDirectory: ''
+          environmentVariables: {
+            Tito_Version: '${input.Tito_Version}',
+            Wavefront_Proxy: '${input.Wavefront_Proxy}',
+            Wavefront_Proxy_port: '${input.Wavefront_Proxy_port}'
+          }
+          host: 172.18.4.154
+          arguments: [
+            ]
+          passphrase: ''
+          script: |2+
+
+            echo "$Tito_Version"
+            echo "$Wavefront_Proxy"
+            echo "$Wavefront_Proxy_port"
+
+            cd /root/CAS_agent_scripts/createTitoYaml
+            ./createTitoYaml.sh $Tito_Version 31200 $Wavefront_Proxy $Wavefront_Proxy_port
+
+
+
+          username: root
+      Tito loader:
+        type: vRO
+        endpoints:
+          vcoServer: ahugla - vRO - cpod-vr
+        input:
+          workflowName: TITO_Loader
+          parameters: {
+            TITOport: '31200',
+            QteRequest: '3',
+            TITOService: 172.18.4.155
+          }
+          workflowID: 3d300588-2567-49d0-bb22-b77155462fce
+      Deploy tito yaml:
+        type: K8S
+        endpoints:
+          scm: ahugla - github
+          kubernetesServer: ahugla - K8S - cpod-vr
+        input:
+          filePath: TITO/NodePort/CodeStreamDemo/CodeStreamDemo.yaml
+          commit: ''
+          namespace: ''
+          action: CREATE
+          filterByLabel: ''
+          continueOnConflict: false
+          parameters: {
+            }
+          timeout: '5'
+          yaml: ''
+          revision: n-1
