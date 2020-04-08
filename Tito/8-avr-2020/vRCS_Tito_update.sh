@@ -28,7 +28,7 @@ fi
 
 
 # Si pas deja fait, config httpd.conf pour autoriser le lancement de scripts
-is_present=`more httpd.conf | grep "AddHandler cgi-script .cgi .pl .py" | wc -l`
+is_present=`more /etc/httpd/conf/httpd.conf | grep "AddHandler cgi-script .cgi .pl .py" | wc -l`
 if [ $is_present -eq "0" ]
 then
 	sed -i '/<Directory "\/var\/www\/html">/a AddHandler cgi-script .cgi .pl .py' /etc/httpd/conf/httpd.conf
